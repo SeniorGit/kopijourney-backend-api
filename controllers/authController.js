@@ -75,4 +75,78 @@ const authController = {
         }
     },
 
+    login: async(req, res)=>{
+        try{
+
+            const {email, password} = req.body;
+    
+            // find user by email
+            const userCheck = await query.pool('SELECT id FROM user WHERE email = $1',[email]);
+    
+            if(userCheck.rows.length === 0){
+                res.status(401).json({
+                    success: false,
+                    message: 'Invalid email or password'
+                })
+            }
+            
+            const user = userCheck.rows[0];
+
+            if(user.locked_until && user.locked_until > new Date()){
+                return res.status(432).json({
+                    success: false,
+                    message: 'Account temporarily locked due to too many failed attampes'
+                });
+            }
+
+            const isPassword = await comparePassword(password, user.password)
+            if(!isPassword){
+                const newAttempts = user.login_attemps + 1;
+                let lockUntil = null;
+
+                if(newAttempts >= 5){
+                    lockUntil = new Date(Date.now() + 30 * 60  * 1000);
+                }
+
+                await pool.query(
+                    'UPDATE user SET login_attempts = $1, locked_until = $2 WHERE id = $3',
+                    [newAttempts, lockUntil, user.id]
+                );
+
+                res.status(401).json({
+                    success: false,
+                    message: 'Invalid email or password'
+                });
+            }
+    
+            const token = generateToken({
+                userId: user.id,
+                email: user.email,
+                role: user.role
+            });
+
+            res.json({
+                success: true,
+                data:{
+                    user:{
+                        id: user.id,
+                        email: user.email,
+                        firstName: user.firstName,
+                        lastName: user.last_name,
+                        role: user.role
+                    },
+                    token
+                },
+                message: "Login Successfull",
+            })
+        }catch(error){
+            console.error('Error in Login: ', error);
+            res.status(500).json({
+                success: false,
+                message: 'Internal server error during login'
+            })
+        }
+    }
 }
+
+module.exports = {authController}
