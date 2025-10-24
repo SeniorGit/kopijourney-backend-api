@@ -78,7 +78,7 @@ const authController = {
     login: async(req, res)=>{
         try{
 
-            const {email, password} = req.body;
+            const {email, password, rememberMe} = req.body;
     
             // find user by email
             const userCheck = await query.pool('SELECT id FROM user WHERE email = $1',[email]);
@@ -123,6 +123,15 @@ const authController = {
                 userId: user.id,
                 email: user.email,
                 role: user.role
+                }, 
+                rememberMe
+            );
+
+            res.cookie('token', token,{
+                httpOnly: true,
+                secure: true,
+                sameSite: 'Strict',
+                maxAge: rememberMe ? 7*24*60*60*1000 : 24*60*60*1000
             });
 
             res.json({
@@ -138,7 +147,7 @@ const authController = {
                     token
                 },
                 message: "Login Successfull",
-            })
+            })  
         }catch(error){
             console.error('Error in Login: ', error);
             res.status(500).json({
