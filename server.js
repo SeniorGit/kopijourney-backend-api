@@ -1,13 +1,20 @@
 const express = require('express');
-const cors = require('cors')
+const cors = require('cors');
+const {authRouter} = require("./routes/authRouter")
 const app = express();
-
 const port = 3001;
-app.cors();
-app.get('/', (req, res)=>{
-    res.send('hello world');
-});  
 
-app.listen(port, ()=>{
-    console.log(`Server listening to http://localhost:${port}`)
-})
+// gunakan middleware cors
+app.use(cors({
+  origin: '*', 
+  credentials: true
+}))
+
+app.use(express.json());
+
+// Router
+app.use('/api/auth', authRouter)
+
+app.listen(port, () => {
+  console.log(`Server listening at http://localhost:${port}`);
+});

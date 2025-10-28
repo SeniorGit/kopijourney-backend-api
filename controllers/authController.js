@@ -1,161 +1,176 @@
-const {hashPassword, comparePassword, validatePassword} = require('../lib/utils/passwordUtils')
-const {generateToken} = require('../lib/utils/jwtUtils')
-const {pool} = require('../lib/utils/database')
+const { hashPassword, comparePassword, validatePassword } = require('../lib/utils/passwordUtils');
+const { generateToken } = require('../lib/utils/jwtUtils');
+const { pool } = require('../lib/utils/database');
 
-const authController = {
-    register: async (req, res) => {
-        const client = await pool.connect();
+// REGISTER
+exports.register = async (req, res) => {
+    let client;
+    try {
+        // Validasi input DULU sebelum connect database
+        const { email, password, firstName, lastName, role } = req.body;
 
-        try {
-            await client.query('BEGIN');
-
-            const {email, password, firstName, lastName, role } = req.body;
-    
-            // user validation
-            const userCheck = await pool.query(
-                'SELECT id FROM users WHERE email = $1',
-                [email]
-            )
-            if(userCheck.rows.length>0){
-                await client.query('ROLLBACK');
-                return res.status(400).json({
-                    success: false,
-                    message: 'User Already exists with this email'
-                })
-            }
-
-            // password validation
-            if(!validatePassword(password)){
-                await client.query('ROLLBACK');
-                return res.status(400).json({
-                    success: false,
-                    message: 'Password must be at least 8 characters with uppercase, lowercase, and numbers'
-                });
-            }
-
-            // hash password
-            const hashedPassword = await hashPassword(password);
-
-            // create new user
-            const newUser = await client.query(
-                `INSERT INTO users (email, password, first_name, last_name, role)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING id, email, fist_name, last_name, role, create_at`,
-                [email, hashedPassword, firstName, lastName, role]
-            );
-
-            const user = newUser.rows[0];
-
-            await client.query('COMMIT');
-
-            res.status(201).json({
-                success: true,
-                data: {
-                    user: {
-                        id: user.id,
-                        email: user.email,
-                        firstName: user.first_name,
-                        lastName: user.last_name,
-                        role: user.role,
-                        createdAt: user.create_at
-                    },
-                },
-                message: 'User registered successfully'
-            })
-        }catch(error){
-            await client.query('ROLLBACK');
-            console.error('Registration error:', error);
-
-            res.status(500).json({
+        if (!email || !password || !firstName || !lastName || !role) {
+            return res.status(400).json({
                 success: false,
-                message: 'Internal server error during registration'
+                message: 'All fields are required',
             });
-        }finally{
-            client.release()
         }
-    },
 
-    login: async(req, res)=>{
-        try{
-
-            const {email, password, rememberMe} = req.body;
-    
-            // find user by email
-            const userCheck = await query.pool('SELECT id FROM user WHERE email = $1',[email]);
-    
-            if(userCheck.rows.length === 0){
-                res.status(401).json({
-                    success: false,
-                    message: 'Invalid email or password'
-                })
-            }
-            
-            const user = userCheck.rows[0];
-
-            if(user.locked_until && user.locked_until > new Date()){
-                return res.status(432).json({
-                    success: false,
-                    message: 'Account temporarily locked due to too many failed attampes'
-                });
-            }
-
-            const isPassword = await comparePassword(password, user.password)
-            if(!isPassword){
-                const newAttempts = user.login_attemps + 1;
-                let lockUntil = null;
-
-                if(newAttempts >= 5){
-                    lockUntil = new Date(Date.now() + 30 * 60  * 1000);
-                }
-
-                await pool.query(
-                    'UPDATE user SET login_attempts = $1, locked_until = $2 WHERE id = $3',
-                    [newAttempts, lockUntil, user.id]
-                );
-
-                res.status(401).json({
-                    success: false,
-                    message: 'Invalid email or password'
-                });
-            }
-    
-            const token = generateToken({
-                userId: user.id,
-                email: user.email,
-                role: user.role
-                }, 
-                rememberMe
-            );
-
-            res.cookie('token', token,{
-                httpOnly: true,
-                secure: true,
-                sameSite: 'Strict',
-                maxAge: rememberMe ? 7*24*60*60*1000 : 24*60*60*1000
-            });
-
-            res.json({
-                success: true,
-                data:{
-                    user:{
-                        id: user.id,
-                        email: user.email,
-                        firstName: user.firstName,
-                        lastName: user.last_name,
-                        role: user.role
-                    },
-                    token
-                },
-                message: "Login Successfull",
-            })  
-        }catch(error){
-            console.error('Error in Login: ', error);
-            res.status(500).json({
+        // Validasi password
+        if (!validatePassword(password)) {
+            return res.status(400).json({
                 success: false,
-                message: 'Internal server error during login'
-            })
+                message: 'Password must be at least 8 characters and contain uppercase, lowercase, and a number',
+            });
+        }
+
+        client = await pool.connect();
+        
+        const userCheck = await client.query(
+            'SELECT id FROM users WHERE email = $1',
+            [email]
+        );
+        if (userCheck.rows.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'User already exists with this email',
+            });
+        }
+
+        const hashedPassword = await hashPassword(password);
+
+        const newUser = await client.query(
+            `INSERT INTO users (email, password, first_name, last_name, role)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING id, email, first_name, last_name, role, create_at`,
+            [email, hashedPassword, firstName, lastName, role]
+        );
+
+        const user = newUser.rows[0];
+        
+        res.status(201).json({
+            success: true,
+            data: {
+                id: user.id,
+                email: user.email,
+                firstName: user.first_name,
+                lastName: user.last_name,
+                role: user.role,
+                createdAt: user.create_at,
+            },
+            message: 'User registered successfully',
+        });
+
+    } catch (error) {
+        console.error('Registration error:', error);
+        
+        if (error.code === '23505') { 
+            return res.status(400).json({
+                success: false,
+                message: 'User already exists with this email',
+            });
+        }
+        
+        if (error.code === '57014') { 
+            return res.status(408).json({
+                success: false,
+                message: 'Request timeout',
+            });
+        }
+
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error during registration',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    } finally {
+        if (client) {
+            client.release();
+            console.log('🔗 Database client released');
         }
     }
-}
+};
 
-module.exports = {authController}
+// LOGIN  
+exports.login = async (req, res) => {
+    
+    let client;
+    try {
+        const { email, password, rememberMe } = req.body;
+
+        // Validasi input
+        if (!email || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email and password are required',
+            });
+        }
+
+        client = await pool.connect();
+
+        const userCheck = await client.query(
+            'SELECT * FROM users WHERE email = $1', 
+            [email]
+        );
+        
+        if (userCheck.rows.length === 0) {
+            console.log('User not found:', email);
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid email or password',
+            });
+        }
+
+        const user = userCheck.rows[0];
+
+        const isPasswordValid = await comparePassword(password, user.password);
+        
+        if (!isPasswordValid) {
+            console.log('❌ Invalid password for:', email);
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid email or password',
+            });
+        }
+
+        const token = generateToken({
+            userId: user.id,
+            email: user.email,
+            role: user.role,
+        }, rememberMe);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                id: user.id,
+                email: user.email,
+                firstName: user.first_name,
+                lastName: user.last_name,
+                role: user.role,
+                token,
+            },
+            message: 'Login successful',
+        });
+
+    } catch (error) {
+        console.error('Login error:', error);
+        
+        if (error.code === '57014') { // Query timeout
+            return res.status(408).json({
+                success: false,
+                message: 'Request timeout',
+            });
+        }
+
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error during login',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    } finally {
+        if (client) {
+            client.release();
+            console.log('🔗 Database client released');
+        }
+    }
+};
