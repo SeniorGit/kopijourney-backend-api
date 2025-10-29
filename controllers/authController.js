@@ -97,7 +97,6 @@ exports.register = async (req, res) => {
     } finally {
         if (client) {
             client.release();
-            console.log('🔗 Database client released');
         }
     }
 };
@@ -186,7 +185,6 @@ exports.login = async (req, res) => {
     } finally {
         if (client) {
             client.release();
-            console.log('🔗 Database client released');
         }
     }
 };
