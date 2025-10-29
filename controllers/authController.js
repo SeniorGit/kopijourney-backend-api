@@ -1,7 +1,8 @@
 const { hashPassword, comparePassword, validatePassword } = require('../lib/utils/passwordUtils');
 const { generateToken } = require('../lib/utils/jwtUtils');
 const { pool } = require('../lib/utils/database');
-
+const {emailSender} = require('../lib/utils/verifyEmail')
+const {v4:uuidv4} = require('uuid')
 // REGISTER
 exports.register = async (req, res) => {
     let client;
@@ -24,8 +25,8 @@ exports.register = async (req, res) => {
             });
         }
 
+        // connect and checking user if exist
         client = await pool.connect();
-        
         const userCheck = await client.query(
             'SELECT id FROM users WHERE email = $1',
             [email]
@@ -37,17 +38,26 @@ exports.register = async (req, res) => {
             });
         }
 
+        // hashed password
         const hashedPassword = await hashPassword(password);
 
+        // token for verivy email
+        const verificationToken = uuidv4();
+        const expiresIn = new Date(Date.now() + 24*60*60*1000);
+        // insert to db
         const newUser = await client.query(
-            `INSERT INTO users (email, password, first_name, last_name, role)
-             VALUES ($1, $2, $3, $4, $5)
-             RETURNING id, email, first_name, last_name, role, create_at`,
-            [email, hashedPassword, firstName, lastName, role]
+            `INSERT INTO users (email, password, first_name, 
+            last_name, role, verification_token, verification_expires)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id, email, first_name, last_name, role, created_at`,
+            [email, hashedPassword, firstName, lastName, role, verificationToken, expiresIn]
         );
-
+        // send email verify 
         const user = newUser.rows[0];
-        
+        const verifyLink = `https://kopijourney/verify-email?token=${verificationToken}`;
+        await emailSender(email, verifyLink);
+
+        // response if OK
         res.status(201).json({
             success: true,
             data: {
@@ -56,11 +66,12 @@ exports.register = async (req, res) => {
                 firstName: user.first_name,
                 lastName: user.last_name,
                 role: user.role,
-                createdAt: user.create_at,
+                createdAt: user.created_at
             },
             message: 'User registered successfully',
         });
 
+        
     } catch (error) {
         console.error('Registration error:', error);
         
@@ -106,33 +117,38 @@ exports.login = async (req, res) => {
             });
         }
 
-        client = await pool.connect();
-
+        // connect & search user by email
+        client = await pool.connect();      
         const userCheck = await client.query(
             'SELECT * FROM users WHERE email = $1', 
             [email]
         );
-        
-        if (userCheck.rows.length === 0) {
-            console.log('User not found:', email);
-            return res.status(401).json({
-                success: false,
-                message: 'Invalid email or password',
-            });
-        }
 
         const user = userCheck.rows[0];
-
-        const isPasswordValid = await comparePassword(password, user.password);
-        
-        if (!isPasswordValid) {
-            console.log('❌ Invalid password for:', email);
+        // check if user exist
+        if (userCheck.rows.length === 0) {
             return res.status(401).json({
                 success: false,
                 message: 'Invalid email or password',
             });
         }
+        // check if email verify
+        if(!user.email_verified){
+            return res.status(401).json({
+                success: false,
+                message: 'Please verify your account first' 
+            })
+        }
 
+        // check password and compare it 
+        const isPasswordValid = await comparePassword(password, user.password);
+        if (!isPasswordValid) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid email or password',
+            });
+        }
+        // generate token for accessing
         const token = generateToken({
             userId: user.id,
             email: user.email,
@@ -153,9 +169,9 @@ exports.login = async (req, res) => {
         });
 
     } catch (error) {
+        // error on backend
         console.error('Login error:', error);
-        
-        if (error.code === '57014') { // Query timeout
+        if (error.code === '57014') { 
             return res.status(408).json({
                 success: false,
                 message: 'Request timeout',
