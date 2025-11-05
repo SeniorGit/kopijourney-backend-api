@@ -1,20 +1,29 @@
 const { hashPassword, comparePassword, validatePassword } = require('../lib/utils/passwordUtils');
 const { generateToken } = require('../lib/utils/jwtUtils');
-const { pool } = require('../lib/utils/database');
+const db = require('../lib/utils/database');
 const {emailSender} = require('../lib/utils/verifyEmail')
 const {v4:uuidv4} = require('uuid')
+
 // REGISTER
 exports.register = async (req, res) => {
-    let client;
     try {
         // Validasi input DULU sebelum connect database
-        const { email, password, firstName, lastName, role } = req.body;
+        const { email, password, firstName, lastName, role = 'customer' } = req.body;
 
         if (!email || !password || !firstName || !lastName || !role) {
             return res.status(400).json({
                 success: false,
                 message: 'All fields are required',
             });
+        }
+
+        // validasi role
+        const validRoles = ['customer', 'farmer', 'roaster', 'admin'];
+        if(!validRoles.includes(role)){
+            return res.status(400).json({
+                success: false,
+                message: `Invalid role. Must be one of : ${validRoles.join(', ')}`
+            })
         }
 
         // Validasi password
@@ -25,16 +34,12 @@ exports.register = async (req, res) => {
             });
         }
 
-        // connect and checking user if exist
-        client = await pool.connect();
-        const userCheck = await client.query(
-            'SELECT id FROM users WHERE email = $1',
-            [email]
-        );
-        if (userCheck.rows.length > 0) {
+        // check email
+        const isEmail = await db('users').where({email}).first();
+        if (isEmail) {
             return res.status(400).json({
                 success: false,
-                message: 'User already exists with this email',
+                message: 'User already exists',
             });
         }
 
@@ -44,30 +49,26 @@ exports.register = async (req, res) => {
         // token for verivy email
         const verificationToken = uuidv4();
         const expiresIn = new Date(Date.now() + 24*60*60*1000);
+        
         // insert to db
-        const newUser = await client.query(
-            `INSERT INTO users (email, password, first_name, 
-            last_name, role, verification_token, verification_expires)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             RETURNING id, email, first_name, last_name, role, created_at`,
-            [email, hashedPassword, firstName, lastName, role, verificationToken, expiresIn]
-        );
+        const [newUser] = await db('users').insert({
+            email,
+            password: hashedPassword,
+            first_name: firstName,
+            last_name: lastName,
+            role: role,
+            verification_token: verificationToken,
+            verification_token_expires: expiresIn
+        }).returning(['id', 'email', 'first_name', 'last_name', 'role', 'created_at'])
+        
         // send email verify 
-        const user = newUser.rows[0];
         const verifyLink = `https://kopijourney/verify-email?token=${verificationToken}`;
         await emailSender(email, verifyLink);
 
         // response if OK
         res.status(201).json({
             success: true,
-            data: {
-                id: user.id,
-                email: user.email,
-                firstName: user.first_name,
-                lastName: user.last_name,
-                role: user.role,
-                createdAt: user.created_at
-            },
+            data: newUser,
             message: 'User registered successfully',
         });
 
@@ -94,18 +95,11 @@ exports.register = async (req, res) => {
             message: 'Internal server error during registration',
             error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
-    } finally {
-        if (client) {
-            client.release();
-            console.log('🔗 Database client released');
-        }
-    }
+    } 
 };
 
 // LOGIN  
 exports.login = async (req, res) => {
-    
-    let client;
     try {
         const { email, password, rememberMe } = req.body;
 
@@ -118,15 +112,10 @@ exports.login = async (req, res) => {
         }
 
         // connect & search user by email
-        client = await pool.connect();      
-        const userCheck = await client.query(
-            'SELECT * FROM users WHERE email = $1', 
-            [email]
-        );
-
-        const user = userCheck.rows[0];
+        const user = await db('users').where({email}).first()      
+    
         // check if user exist
-        if (userCheck.rows.length === 0) {
+        if (!user) {
             return res.status(401).json({
                 success: false,
                 message: 'Invalid email or password',
@@ -148,6 +137,7 @@ exports.login = async (req, res) => {
                 message: 'Invalid email or password',
             });
         }
+
         // generate token for accessing
         const token = generateToken({
             userId: user.id,
@@ -158,12 +148,14 @@ exports.login = async (req, res) => {
         res.status(200).json({
             success: true,
             data: {
-                id: user.id,
-                email: user.email,
-                firstName: user.first_name,
-                lastName: user.last_name,
-                role: user.role,
-                token,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    firstName: user.first_name,
+                    lastName: user.last_name,
+                    role: user.role,
+                },
+                token: token
             },
             message: 'Login successful',
         });
@@ -183,10 +175,5 @@ exports.login = async (req, res) => {
             message: 'Internal server error during login',
             error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
-    } finally {
-        if (client) {
-            client.release();
-            console.log('🔗 Database client released');
-        }
-    }
+    } 
 };
