@@ -7,7 +7,7 @@ exports.up = function(knex) {
         table.string('password', 255).notNullable();
         table.string('first_name', 100).notNullable();
         table.string('last_name', 100).notNullable();
-        table.enu('role',['customer', 'farmer', 'roaster', 'admin']).notNullable();
+        table.enu('role',['customer', 'farmer', 'roaster', 'admin']).notNullable().defaultTo('customer');
 
         // email verification
         table.boolean('is_verified').defaultTo(false);
@@ -24,7 +24,7 @@ exports.up = function(knex) {
 
         // scurity
         table.integer('login_attempts').defaultTo(0);
-        table.timestamp('locked_untill').nullable();
+        table.timestamp('locked_until').nullable();
         table.timestamp('last_login').nullable()
 
         // timestamp
@@ -33,7 +33,7 @@ exports.up = function(knex) {
 
         // preverense
         table.json('taste_preferences').nullable();
-        table.string('preferred_roast_level').nullable();
+        table.string('preferences_roast_level').nullable();
         table.boolean('newsletter_subscribed').defaultTo(true)
 
         // index
